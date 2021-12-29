@@ -1,8 +1,7 @@
 #!/bin/bash
+capsule='capsule.local.net'
 
-
-
-precheck() {
+precheck_old() {
   echo "Checking authentication"
   rm -f /tmp/org.csv
   #for centos/hammer 0.19:
@@ -18,24 +17,39 @@ precheck() {
   fi
   }
 
-prepare () {
-  org=$(tail -1 /tmp/org.csv)
-  hammer defaults add --param-name organization --param-value "$org"
+precheck() {
+  grep ' :use_sessions:' ~/.hammer/cli.modules.d/foreman.yml > /dev/null || \
+  echo ':foreman:
+ :use_sessions: true' >  ~/.hammer/cli.modules.d/foreman.yml
+  hammer --interactive no organization list > /dev/null || hammer auth login basic -u `whoami`
+}
+
+prepare() {
+  rm -f ~/.hammer/defaults.yml
+  #hammer defaults delete --param-name organization
+  #hammer defaults add --param-name organization --param-value "$org"
   #hammer defaults add --param-name location --param-value "$LOC"
+  #hammer --csv --no-headers organization list 2>/dev/null | cut -d "," -f 3 > /tmp/org.csv 2>&1
+  echo "prepare Organization list"
+  hammer --csv --no-headers organization list | cut -d "," -f 3 > /tmp/org.csv 
   echo "prepare Life Cycle Enviroment list"
   hammer --csv --no-headers lifecycle-environment list > /tmp/les.csv
   echo "prepare Content View list"
   hammer --csv --no-headers content-view list  > /tmp/cvs.csv
   echo "prepare Content View versions list"
   hammer --csv --no-headers content-view version list > /tmp/cvvs.csv
-  #set comment for new versions
-  comment="Patchday $(date +%b\ %Y)"
   #get Content Views
   cv=$(grep false /tmp/cvs.csv | cut -d "," -f 1 | sort -n)
   #get Composite Content Views id
   ccv=$(grep true /tmp/cvs.csv | cut -d "," -f 1 | sort -n)
   #get organisation
+  org=$(tail -1 /tmp/org.csv)
+  hammer defaults add --param-name organization --param-value "$org"
   }
+
+prepare_tmp() {
+  /bin/true
+}
 
 cleanup() {
   rm -f /tmp/les.csv
@@ -44,6 +58,10 @@ cleanup() {
   rm -f /tmp/org.csv
   #/bin/true
   }
+
+cleanup_tmp() {
+  /bin/true
+}
 
 listcvs () {
   echo "List Content-view versions"
@@ -64,49 +82,93 @@ updatecv() {
   echo "Publish new versions of Content Views"
    for i in $cv
     do
-     echo "Publish new version Content View $i"
+     echo "Publish new version Content View id $i $comment"
      hammer content-view publish --id "$i" --description "$comment" #--async
     done
   }
 
 updateccv() {
-  echo "$ccv"
+  #echo "$ccv"
   echo "Publish new versions of Composite Content Views"
    for i in $ccv
     do
-     echo "Publish new version Content View $i"
+     echo "Publish new version Composite Content View id $i $comment"
      hammer content-view publish --id "$i" --description "$comment" #--async
     done
   }
 
 promote() {
-  env=$1
-  #cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$env"
-  cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$env" | while read env2
+  #find the LiveCyleEnvironment which matches our searchstring
+  matchenv=$1
+  #cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$matchenv"
+  cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$matchenv" | while read env2
   do
-  #echo env2 is $env2
-    contentview=$(grep -i "$env2" /tmp/cvvs.csv | cut -d "," -f 2 | rev | cut -d ' ' -f 1 --complement | rev)
-    #echo contentview is $contentview
+  echo ""
+  echo "current LifeCycleEnvironment is $env2"
+    #Skip for LifeCycleEnvironment Library, Hund
+    if [[ "$env2" = @('Library'|'Hund') ]]; then
+       echo "skipping LifeCycleEnvironment $env2"
+       continue
+    fi
+    #find the contentview used by the LiveCyleEnvironment
+    contentview=$(grep -i "$env2" /tmp/cvvs.csv | grep -v 'Default Organization View' | cut -d "," -f 2 | rev | cut -d ' ' -f 1 --complement | rev)
+    echo "environment $env2 is using contentview $contentview"
+    #Find the latest Version of this Contentview
     versid=$(grep "$contentview" /tmp/cvvs.csv| cut -d ',' -f1 | sort -nr | head -n1)
-    #echo versid is $versid
-      grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version description lce #CentOS/hammer 0.19
-      #grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version lce #RedHat/hammer 0.17
-      do
-      #echo lce is $lce
-        lce2="$(echo $lce | tr -d '"'| sed s/Library,//g | sed s/Library//g),"
-        #echo lce2 is $lce2
-        echo $lce2 | while read -d ',' lce3
-        do
-          #echo lce3 is $lce3
-          lce4=$(echo "$lce3" | grep -i "$env")
-          echo lce4 is $lce4
-          if [ ! -z "$lce4" ]; then
-           echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $lce4"
-           hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$lce4" --force #--async
-           #echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$lce4\" --force #--async"
-          fi
-        done
-      done
+    echo "latest version of contentview $contentview is $versid"
+           echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $env2"
+           hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$env2" --force #--async
+           #echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$env2\" --force #--async"
+
+      #Anzeichen von Wahnsinn:
+      #grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version description lce #CentOS/hammer 0.19
+      ##grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version lce #RedHat/hammer 0.17
+      #do
+      #echo "lce is $lce"
+      ##find lifecycleenvironments used by this contentview
+      #echo "contentview $contentview is using this livecycle environments $lce"
+      #  lce2="$(echo $lce | tr -d '"' | sed s/Library,//g | sed s/Library//g | tr -d ',')"
+      #if [ ! -z "$lce2" ]; then
+      #  echo lce2 is $lce2
+      #  #echo $lce2 | while read -d ',' lce3
+      #  echo $lce2 | while read -d ' ' lce3
+      #  do
+      #    echo lce3 is $lce3
+      #    lce4=$(echo "$lce3" | grep -i "$matchenv")
+      #    echo lce4 is $lce4
+      #    if [ ! -z "$lce4" ]; then
+      #     echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $lce4"
+      #     #hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$lce4" --force #--async
+      #     echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$lce4\" --force #--async"
+      #    fi
+      #  done
+      #fi
+      #done
+  done
+  }
+
+rollback() {
+  #find the LiveCyleEnvironment which matches our searchstring
+  matchenv=$1
+  #cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$matchenv"
+  cat /tmp/les.csv | cut -d ',' -f 2 | grep -i "$matchenv" | while read env2
+  do
+  echo ""
+  echo "current LifeCycleEnvironment is $env2"
+    #Skip for LifeCycleEnvironment Library, Hund
+    if [[ "$env2" = @('Library'|'Hund') ]]; then
+       echo "skipping LifeCycleEnvironment $env2"
+       continue
+    fi
+    #find the contentview used by the LiveCyleEnvironment
+    contentview=$(grep -i "$env2" /tmp/cvvs.csv | grep -v 'Default Organization View' | cut -d "," -f 2 | rev | cut -d ' ' -f 1 --complement | rev)
+    echo "environment $env2 is using contentview $contentview"
+    #Find the prelatest Version of this Contentview
+    versid=$(grep "$contentview" /tmp/cvvs.csv| cut -d ',' -f1 | sort -nr | head -n2 | tail -1)
+    echo "latest version of contentview $contentview is $versid"
+           echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $env2"
+           hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$env2" --force #--async
+           #echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$env2\" --force #--async"
   done
   }
 
@@ -126,7 +188,7 @@ aufraeumen() {
 synctocapsule() {
   cat /tmp/les.csv | cut -d ',' -f 1 | sort | while read lceid
     do
-      hammer capsule content synchronize --lifecycle-environment-id $lceid --name 'capsule.local'
+      hammer capsule content synchronize --lifecycle-environment-id $lceid --name "$capsule"
     done
   }
 
@@ -138,6 +200,14 @@ case $1 in
     cleanup
   ;;
   -c | --create)
+    #set comment for new versions
+    if [ -z "${2}" ]; then
+      #echo "Comment is unset or set to the empty string"
+      comment="Patchday $(date +%b\ %Y)"
+    else 
+      comment="$2 $(date +%b\ %Y)"
+    fi
+    #echo "comment is $comment"
     precheck
     prepare
     updatecv
@@ -148,6 +218,12 @@ case $1 in
     precheck
     prepare
     promote $2
+    cleanup
+  ;;
+  -r | --rollback)
+    precheck
+    prepare
+    rollback $2
     cleanup
   ;;
   -s | --synctocapsule)
@@ -163,9 +239,9 @@ case $1 in
     cleanup
   ;;
   * | -h | --help)
-    echo -e "Usage:\n -l, --list\n    to list published CV versions\n -c, --create\n    to create new CV version\n -p, --promote DEV/TEST/PROD/Name\n    to promote latest CV version to DEV/TEST/PROD/Name\n -s, --synctocapsule\n    to sync content to porc02\n -a, --aufraeumen\n    to clean up to 6 latest versions of Content Views\n -h, --help\n    to read this"
+    echo -e "Usage:\n -l, --list\n    to list published CV versions\n -c, --create (description)\n    to create new CV version, decription is optional\n -p, --promote (searchstring like DEV/TEST/PROD)\n    to promote latest CV version to optional searchstring like DEV/TEST/PROD, if missing to all\n -r, --rolback (searchstring)\n    roll back CV to previous version\n -s, --synctocapsule\n    to sync content to $capsule\n -a, --aufraeumen\n    to clean up to 6 latest versions of Content Views\n -h, --help\n    to read this"
     exit 1
   ;;
 esac
 
-echo -e "\ndo not forget to remove your credentials from the config file:\nvim ~/.hammer/cli.modules.d/foreman.yml"
+
