@@ -1,22 +1,6 @@
 #!/bin/bash
 capsule='capsule.local.net'
 
-precheck_old() {
-  echo "Checking authentication"
-  rm -f /tmp/org.csv
-  #for centos/hammer 0.19:
-  #hammer --csv --no-headers organization list --organization-id 1 2>/dev/null | cut -d "," -f 3 > /tmp/org.csv 2>&1
-  #for redhat/hammer 0.17:
-  hammer --csv --no-headers organization list 2>/dev/null | cut -d "," -f 3 > /tmp/org.csv 2>&1
-  if [ -s /tmp/org.csv ]
-  then
-    echo "successfull authenticated"
-  else
-    echo -e "\ncould not login to Foreman\nplease insert your credentials into the config file:\nvim ~/.hammer/cli.modules.d/foreman.yml"
-    exit 1
-  fi
-  }
-
 precheck() {
   grep ' :use_sessions:' ~/.hammer/cli.modules.d/foreman.yml > /dev/null || \
   echo ':foreman:
@@ -47,10 +31,6 @@ prepare() {
   hammer defaults add --param-name organization --param-value "$org"
   }
 
-prepare_tmp() {
-  /bin/true
-}
-
 cleanup() {
   rm -f /tmp/les.csv
   rm -f /tmp/cvs.csv
@@ -58,10 +38,6 @@ cleanup() {
   rm -f /tmp/org.csv
   #/bin/true
   }
-
-cleanup_tmp() {
-  /bin/true
-}
 
 listcvs () {
   echo "List Content-view versions"
@@ -119,31 +95,6 @@ promote() {
            echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $env2"
            hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$env2" --force #--async
            #echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$env2\" --force #--async"
-
-      #Anzeichen von Wahnsinn:
-      #grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version description lce #CentOS/hammer 0.19
-      ##grep "$contentview" /tmp/cvvs.csv | while IFS=',' read -r id name version lce #RedHat/hammer 0.17
-      #do
-      #echo "lce is $lce"
-      ##find lifecycleenvironments used by this contentview
-      #echo "contentview $contentview is using this livecycle environments $lce"
-      #  lce2="$(echo $lce | tr -d '"' | sed s/Library,//g | sed s/Library//g | tr -d ',')"
-      #if [ ! -z "$lce2" ]; then
-      #  echo lce2 is $lce2
-      #  #echo $lce2 | while read -d ',' lce3
-      #  echo $lce2 | while read -d ' ' lce3
-      #  do
-      #    echo lce3 is $lce3
-      #    lce4=$(echo "$lce3" | grep -i "$matchenv")
-      #    echo lce4 is $lce4
-      #    if [ ! -z "$lce4" ]; then
-      #     echo "Publish latest version/ID $versid Composite Content View $contentview to Lifecycle environments $lce4"
-      #     #hammer content-view version promote --id "$versid" --content-view "$contentview" --to-lifecycle-environment "$lce4" --force #--async
-      #     echo "hammer content-view version promote --id \"$versid\" --content-view \"$contentview\" --to-lifecycle-environment \"$lce4\" --force #--async"
-      #    fi
-      #  done
-      #fi
-      #done
   done
   }
 
@@ -243,5 +194,3 @@ case $1 in
     exit 1
   ;;
 esac
-
-
